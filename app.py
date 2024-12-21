@@ -41,7 +41,10 @@ def get_openai_client():
     """Initialise le client OpenAI uniquement si nécessaire"""
     try:
         if 'OPENAI_API_KEY' in st.secrets:
-            client = OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
+            client = OpenAI(
+                api_key=st.secrets['OPENAI_API_KEY'],
+                base_url="https://api.openai.com/v1"  # URL API explicite
+            )
             return client
     except Exception as e:
         st.warning('⚠️ Configuration OpenAI manquante ou invalide')
