@@ -14,11 +14,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialisation de l'API OpenAI si la clé est présente
-if 'OPENAI_API_KEY' in st.secrets:
-    client = OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
-else:
+def get_openai_client():
+    """Initialise le client OpenAI uniquement si nécessaire"""
+    if 'OPENAI_API_KEY' in st.secrets:
+        return OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
     st.sidebar.warning('⚠️ Ajoutez votre clé API OpenAI dans les secrets')
+    return None
 
 def download_and_convert_to_wav(url):
     """Télécharge la vidéo et la convertit en WAV"""
@@ -48,42 +49,12 @@ def download_and_convert_to_wav(url):
         st.error(f"Erreur lors du téléchargement: {str(e)}")
         return None
 
-def transcribe_audio(audio_path, language='fr-FR'):
-    """Transcrit le fichier audio"""
-    recognizer = sr.Recognizer()
-    full_text = []
-    
-    try:
-        with sr.AudioFile(audio_path) as source:
-            # Ajuster pour le bruit ambiant
-            recognizer.adjust_for_ambient_noise(source)
-            
-            # Lire l'audio
-            audio = recognizer.record(source)
-            
-            # Transcrire
-            text = recognizer.recognize_google(audio, language=language)
-            full_text.append(text)
-            
-        return ' '.join(full_text)
-    except sr.UnknownValueError:
-        st.error("La parole n'a pas pu être reconnue")
-        return None
-    except sr.RequestError as e:
-        st.error(f"Erreur avec le service de reconnaissance: {e}")
-        return None
-    except Exception as e:
-        st.error(f"Erreur inattendue: {e}")
-        return None
-    finally:
-        # Nettoyage
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
+def transcribe_a
 
 def improve_text_with_gpt(text, style='default'):
     """Améliore le texte avec GPT"""
-    if 'OPENAI_API_KEY' not in st.secrets:
-        st.error("Clé API OpenAI manquante")
+    client = get_openai_client()
+    if not client:
         return None
         
     style_prompts = {
@@ -95,7 +66,7 @@ def improve_text_with_gpt(text, style='default'):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Tu es un expert en réécriture et amélioration de texte."},
                 {"role": "user", "content": f"{style_prompts[style]}\n\n{text}"}
@@ -156,51 +127,52 @@ def main():
                         )
                         
                         # Options d'amélioration
-                        st.subheader("Amélioration avec IA")
-                        style = st.selectbox(
-                            "Style de reformulation:",
-                            options=['default', 'formal', 'simple', 'academic'],
-                            format_func=lambda x: {
-                                'default': 'Standard',
-                                'formal': 'Formel',
-                                'simple': 'Simplifié',
-                                'academic': 'Académique'
-                            }[x]
-                        )
-                        
-                        if st.button("Améliorer avec GPT"):
-                            with st.spinner("Amélioration du texte..."):
-                                improved_text = improve_text_with_gpt(transcription, style)
-                                if improved_text:
-                                    st.text_area(
-                                        "Texte amélioré:",
-                                        value=improved_text,
-                                        height=300,
-                                        key="improved_text"
-                                    )
-                                    
-                                    # Export
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.download_button(
-                                            "📄 Télécharger TXT",
-                                            improved_text,
-                                            file_name="transcription_amelioree.txt",
-                                            mime="text/plain"
+                        if 'OPENAI_API_KEY' in st.secrets:
+                            st.subheader("Amélioration avec IA")
+                            style = st.selectbox(
+                                "Style de reformulation:",
+                                options=['default', 'formal', 'simple', 'academic'],
+                                format_func=lambda x: {
+                                    'default': 'Standard',
+                                    'formal': 'Formel',
+                                    'simple': 'Simplifié',
+                                    'academic': 'Académique'
+                                }[x]
+                            )
+                            
+                            if st.button("Améliorer avec GPT"):
+                                with st.spinner("Amélioration du texte..."):
+                                    improved_text = improve_text_with_gpt(transcription, style)
+                                    if improved_text:
+                                        st.text_area(
+                                            "Texte amélioré:",
+                                            value=improved_text,
+                                            height=300,
+                                            key="improved_text"
                                         )
-                                    
-                                    with col2:
-                                        json_data = json.dumps({
-                                            "original": transcription,
-                                            "improved": improved_text,
-                                            "style": style
-                                        }, ensure_ascii=False, indent=2)
-                                        st.download_button(
-                                            "📄 Télécharger JSON",
-                                            json_data,
-                                            file_name="transcription.json",
-                                            mime="application/json"
-                                        )
+                                        
+                                        # Export
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.download_button(
+                                                "📄 Télécharger TXT",
+                                                improved_text,
+                                                file_name="transcription_amelioree.txt",
+                                                mime="text/plain"
+                                            )
+                                        
+                                        with col2:
+                                            json_data = json.dumps({
+                                                "original": transcription,
+                                                "improved": improved_text,
+                                                "style": style
+                                            }, ensure_ascii=False, indent=2)
+                                            st.download_button(
+                                                "📄 Télécharger JSON",
+                                                json_data,
+                                                file_name="transcription.json",
+                                                mime="application/json"
+                                            )
         else:
             st.warning("⚠️ Veuillez entrer une URL valide")
 
