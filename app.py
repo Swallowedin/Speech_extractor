@@ -215,6 +215,10 @@ def improve_text_with_gpt(text, style='default'):
         improved_text = response.choices[0].message.content
         st.session_state.improved_text = improved_text
         return improved_text
+        
+    except Exception as e:
+        st.error(f"Erreur lors de l'amélioration du texte : {str(e)}")
+        return None
 
 def main():
     st.title("🎤 Transcripteur Audio/Vidéo Universel")
