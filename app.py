@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import yt_dlp
 import os
@@ -14,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Liste des plateformes supportées (extrait des plus populaires)
+# Liste des plateformes supportées
 SUPPORTED_PLATFORMS = {
     'YouTube': ['youtube.com', 'youtu.be'],
     'Vimeo': ['vimeo.com'],
@@ -30,6 +31,19 @@ SUPPORTED_PLATFORMS = {
     'Autres plateformes': ['*']
 }
 
+# Initialisation du session_state
+if 'transcription' not in st.session_state:
+    st.session_state.transcription = None
+if 'url' not in st.session_state:
+    st.session_state.url = None
+
+def get_openai_client():
+    """Initialise le client OpenAI uniquement si nécessaire"""
+    if 'OPENAI_API_KEY' in st.secrets:
+        return OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
+    st.sidebar.warning('⚠️ Ajoutez votre clé API OpenAI dans les secrets')
+    return None
+
 def detect_platform(url):
     """Détecte la plateforme à partir de l'URL"""
     for platform, domains in SUPPORTED_PLATFORMS.items():
@@ -37,14 +51,6 @@ def detect_platform(url):
             if domain in url.lower() or domain == '*':
                 return platform
     return 'Autres plateformes'
-
-def get_available_extractors():
-    """Récupère la liste des extracteurs disponibles"""
-    try:
-        with yt_dlp.YoutubeDL() as ydl:
-            return ydl.get_extractors()
-    except:
-        return []
 
 def download_and_convert_to_wav(url):
     """Télécharge l'audio depuis n'importe quelle plateforme supportée"""
@@ -62,15 +68,12 @@ def download_and_convert_to_wav(url):
             }],
             'outtmpl': output_path,
             'quiet': True,
-            # Options pour éviter les restrictions
             'extract_flat': False,
             'no_warnings': True,
             'no_color': True,
             'geo_bypass': True,
             'nocheckcertificate': True,
-            # User agent générique
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            # Gestion des erreurs
             'retries': 3,
             'fragment_retries': 3,
             'skip_unavailable_fragments': True,
@@ -91,19 +94,17 @@ def download_and_convert_to_wav(url):
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Vérifier si l'URL est supportée
                 info = ydl.extract_info(url, download=False)
                 if info.get('duration', 0) > 3600:  # Plus d'une heure
                     if not st.confirm("⚠️ Cette vidéo est très longue. Continuer ?"):
                         return None
                 
-                # Télécharger
                 st.info("⏬ Téléchargement en cours...")
                 ydl.download([url])
                 
         except yt_dlp.utils.DownloadError as e:
             if "Sign in" in str(e) or "Login" in str(e):
-                st.error(f"❌ Authentification requise pour {platform}. Essayez une autre vidéo ou contactez le support.")
+                st.error(f"❌ Authentification requise pour {platform}")
             else:
                 st.error(f"❌ Erreur de téléchargement : {str(e)}")
             return None
@@ -137,8 +138,6 @@ def transcribe_audio(audio_path, language='fr-FR'):
         
         # Traiter chaque segment
         segments = sorted([f for f in os.listdir(segment_dir) if f.startswith('segment_')])
-        
-        # Créer une barre de progression
         progress_text = "Transcription en cours..."
         progress_bar = st.progress(0, text=progress_text)
         
@@ -198,7 +197,7 @@ def improve_text_with_gpt(text, style='default'):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Tu es un expert en réécriture et amélioration de texte."},
                 {"role": "user", "content": f"{style_prompts[style]}\n\n{text}"}
@@ -213,22 +212,17 @@ def improve_text_with_gpt(text, style='default'):
 def main():
     st.title("🎤 Transcripteur Audio/Vidéo Universel")
     
-    # Description et instructions
     st.markdown("""
     ### Plateformes supportées :
-    Cette application peut transcrire l'audio depuis de nombreuses plateformes, notamment :
-    - YouTube, Vimeo, Dailymotion
-    - Réseaux sociaux (Facebook, Instagram, TikTok, Twitter/X)
-    - Plateformes de streaming (Twitch)
-    - Et bien d'autres !
+    Cette application peut transcrire l'audio depuis de nombreuses plateformes.
     
     ### Mode d'emploi :
     1. Collez l'URL de votre contenu
     2. Choisissez la langue
     3. Lancez la transcription
+    4. Utilisez l'IA pour améliorer le texte
     """)
     
-    # Configuration initiale
     languages = {
         'Français': 'fr-FR',
         'English': 'en-US',
@@ -236,35 +230,26 @@ def main():
         'Deutsch': 'de-DE'
     }
     
-    # Interface principale
     col1, col2 = st.columns([3, 1])
     
     with col1:
         url = st.text_input("URL du média", 
-                           placeholder="https://www.example.com/video...",
-                           help="Collez ici l'URL de la vidéo ou de l'audio à transcrire")
+                           placeholder="https://www.example.com/video...")
         if url:
             platform = detect_platform(url)
             st.caption(f"📺 Plateforme détectée : {platform}")
     
     with col2:
-        selected_lang = st.selectbox(
-            "Langue",
-            options=list(languages.keys()),
-            index=0,
-            help="Sélectionnez la langue principale du contenu"
-        )
+        selected_lang = st.selectbox("Langue", options=list(languages.keys()), index=0)
     
     # Bouton de transcription
     if st.button("🎯 Lancer la transcription", type="primary"):
         if url:
-            # Phase 1 : Téléchargement
             with st.status("Traitement en cours...") as status:
                 status.write("⏬ Téléchargement du média...")
                 audio_path = download_and_convert_to_wav(url)
                 
                 if audio_path:
-                    # Phase 2 : Transcription
                     status.write("🎤 Transcription du contenu...")
                     transcription = transcribe_audio(
                         audio_path,
@@ -273,127 +258,88 @@ def main():
                     
                     if transcription:
                         status.update(label="✅ Transcription terminée !", state="complete")
-                        
-                        # Affichage de la transcription brute
-                        st.subheader("📝 Transcription brute")
-                        raw_transcription = st.text_area(
-                            "Vous pouvez éditer le texte directement ici :",
-                            value=transcription,
-                            height=200,
-                            key="raw_transcription"
+                        st.session_state.transcription = transcription
+                        st.session_state.url = url
+    
+    # Afficher la transcription si elle existe
+    if st.session_state.transcription:
+        st.subheader("📝 Transcription")
+        raw_transcription = st.text_area(
+            "Vous pouvez éditer le texte directement ici :",
+            value=st.session_state.transcription,
+            height=200,
+            key="raw_transcription"
+        )
+        
+        # Options d'amélioration avec GPT
+        st.subheader("🤖 Amélioration avec IA")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            style = st.selectbox(
+                "Style de reformulation :",
+                options=['default', 'formal', 'simple', 'academic'],
+                format_func=lambda x: {
+                    'default': '✨ Standard (clarté et cohérence)',
+                    'formal': '👔 Formel/Professionnel',
+                    'simple': '📚 Simplifié/Vulgarisé',
+                    'academic': '🎓 Académique'
+                }[x]
+            )
+        
+        with col2:
+            if st.button("Améliorer le texte"):
+                with st.spinner("🔄 Amélioration en cours..."):
+                    improved_text = improve_text_with_gpt(raw_transcription, style)
+                    if improved_text:
+                        st.text_area(
+                            "Texte amélioré :",
+                            value=improved_text,
+                            height=300,
+                            key="improved_text"
                         )
                         
-                        # Options d'amélioration avec GPT si disponible
-                        if 'OPENAI_API_KEY' in st.secrets:
-                            st.subheader("🤖 Amélioration avec IA")
-                            col1, col2 = st.columns([3, 1])
-                            
-                            with col1:
-                                style = st.selectbox(
-                                    "Style de reformulation :",
-                                    options=['default', 'formal', 'simple', 'academic'],
-                                    format_func=lambda x: {
-                                        'default': '✨ Standard (clarté et cohérence)',
-                                        'formal': '👔 Formel/Professionnel',
-                                        'simple': '📚 Simplifié/Vulgarisé',
-                                        'academic': '🎓 Académique'
-                                    }[x]
-                                )
-                            
-                            with col2:
-                                if st.button("Améliorer le texte"):
-                                    with st.spinner("🔄 Amélioration en cours..."):
-                                        improved_text = improve_text_with_gpt(raw_transcription, style)
-                                        if improved_text:
-                                            st.text_area(
-                                                "Texte amélioré :",
-                                                value=improved_text,
-                                                height=300,
-                                                key="improved_text"
-                                            )
-                                            
-                                            # Options d'export
-                                            st.subheader("💾 Exporter")
-                                            col1, col2, col3 = st.columns(3)
-                                            
-                                            with col1:
-                                                st.download_button(
-                                                    "📄 Version brute (TXT)",
-                                                    raw_transcription,
-                                                    file_name="transcription_brute.txt",
-                                                    mime="text/plain"
-                                                )
-                                            
-                                            with col2:
-                                                st.download_button(
-                                                    "📄 Version améliorée (TXT)",
-                                                    improved_text,
-                                                    file_name="transcription_amelioree.txt",
-                                                    mime="text/plain"
-                                                )
-                                            
-                                            with col3:
-                                                json_data = json.dumps({
-                                                    "url": url,
-                                                    "platform": detect_platform(url),
-                                                    "language": selected_lang,
-                                                    "original": raw_transcription,
-                                                    "improved": improved_text,
-                                                    "style": style
-                                                }, ensure_ascii=False, indent=2)
-                                                
-                                                st.download_button(
-                                                    "📄 Rapport complet (JSON)",
-                                                    json_data,
-                                                    file_name="transcription_complete.json",
-                                                    mime="application/json"
-                                                )
-                        else:
-                            # Options d'export version simple
-                            st.subheader("💾 Exporter")
+                        # Options d'export
+                        st.subheader("💾 Exporter")
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
                             st.download_button(
-                                "📄 Télécharger la transcription (TXT)",
+                                "📄 Version brute (TXT)",
                                 raw_transcription,
-                                file_name="transcription.txt",
+                                file_name="transcription_brute.txt",
                                 mime="text/plain"
                             )
-                    else:
-                        status.update(label="❌ Échec de la transcription", state="error")
-                else:
-                    status.update(label="❌ Échec du téléchargement", state="error")
-        else:
-            st.warning("⚠️ Veuillez entrer une URL valide")
-    
-    # Afficher la barre de statut des services
-    with st.sidebar:
-        st.subheader("📊 État des services")
-        
-        # Vérification du service de téléchargement
-        try:
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                st.success("✅ Service de téléchargement : Opérationnel")
-        except:
-            st.error("❌ Service de téléchargement : Hors service")
-        
-        # Vérification de l'API Speech Recognition
-        try:
-            recognizer = sr.Recognizer()
-            st.success("✅ Service de reconnaissance vocale : Opérationnel")
-        except:
-            st.error("❌ Service de reconnaissance vocale : Hors service")
-        
-        # Vérification de l'API GPT
-        if 'OPENAI_API_KEY' in st.secrets:
-            st.success("✅ Service d'amélioration IA : Disponible")
-        else:
-            st.warning("⚠️ Service d'amélioration IA : Non configuré")
-        
-        # Informations système
-        st.subheader("ℹ️ Informations")
-        st.info(
-            f"Plateformes supportées : {len(SUPPORTED_PLATFORMS)}\n"
-            f"Langues disponibles : {len(languages)}"
-        )
+                        
+                        with col2:
+                            st.download_button(
+                                "📄 Version améliorée (TXT)",
+                                improved_text,
+                                file_name="transcription_amelioree.txt",
+                                mime="text/plain"
+                            )
+                        
+                        with col3:
+                            json_data = json.dumps({
+                                "url": st.session_state.url,
+                                "platform": detect_platform(st.session_state.url),
+                                "original": raw_transcription,
+                                "improved": improved_text,
+                                "style": style
+                            }, ensure_ascii=False, indent=2)
+                            
+                            st.download_button(
+                                "📄 Rapport complet (JSON)",
+                                json_data,
+                                file_name="transcription_complete.json",
+                                mime="application/json"
+                            )
+
+    # Bouton pour effacer les résultats
+    if st.session_state.transcription and st.sidebar.button("🗑️ Effacer les résultats"):
+        st.session_state.transcription = None
+        st.session_state.url = None
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
