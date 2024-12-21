@@ -189,6 +189,7 @@ def transcribe_audio(audio_path, language='fr-FR'):
                     pass
             os.rmdir(segment_dir)
 
+
 def improve_text_with_gpt(text, style='default'):
     """Améliore le texte avec GPT"""
     if 'OPENAI_API_KEY' not in st.secrets:
