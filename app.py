@@ -39,9 +39,13 @@ if 'url' not in st.session_state:
 
 def get_openai_client():
     """Initialise le client OpenAI uniquement si nécessaire"""
-    if 'OPENAI_API_KEY' in st.secrets:
-        return OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
-    st.sidebar.warning('⚠️ Ajoutez votre clé API OpenAI dans les secrets')
+    try:
+        if 'OPENAI_API_KEY' in st.secrets:
+            client = OpenAI(api_key=st.secrets['OPENAI_API_KEY'])
+            return client
+    except Exception as e:
+        st.warning('⚠️ Configuration OpenAI manquante ou invalide')
+        st.error(f"Erreur : {str(e)}")
     return None
 
 def detect_platform(url):
@@ -184,18 +188,22 @@ def transcribe_audio(audio_path, language='fr-FR'):
 
 def improve_text_with_gpt(text, style='default'):
     """Améliore le texte avec GPT"""
-    client = get_openai_client()
-    if not client:
+    if 'OPENAI_API_KEY' not in st.secrets:
+        st.warning("⚠️ Clé API OpenAI non configurée. L'amélioration du texte n'est pas disponible.")
         return None
         
-    style_prompts = {
-        'default': "Reformule ce texte pour le rendre plus clair et cohérent :",
-        'formal': "Reformule ce texte dans un style formel et professionnel :",
-        'simple': "Reformule ce texte pour le rendre plus simple à comprendre :",
-        'academic': "Reformule ce texte dans un style académique :"
-    }
-    
     try:
+        client = get_openai_client()
+        if not client:
+            return None
+            
+        style_prompts = {
+            'default': "Reformule ce texte pour le rendre plus clair et cohérent :",
+            'formal': "Reformule ce texte dans un style formel et professionnel :",
+            'simple': "Reformule ce texte pour le rendre plus simple à comprendre :",
+            'academic': "Reformule ce texte dans un style académique :"
+        }
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -204,23 +212,52 @@ def improve_text_with_gpt(text, style='default'):
             ],
             temperature=0.7
         )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.error(f"Erreur GPT: {str(e)}")
-        return None
+        improved_text = response.choices[0].message.content
+        st.session_state.improved_text = improved_text
+        return improved_text
 
 def main():
     st.title("🎤 Transcripteur Audio/Vidéo Universel")
     
-    st.markdown("""
-    ### Plateformes supportées :
-    Cette application peut transcrire l'audio depuis de nombreuses plateformes.
+    # Sidebar pour la configuration YouTube
+    with st.sidebar:
+        st.header("Configuration YouTube")
+        st.markdown("""
+        Si vous rencontrez des erreurs d'authentification YouTube, ajoutez vos cookies ici :
+        
+        Pour obtenir vos cookies :
+        1. Connectez-vous à YouTube
+        2. Ouvrez les DevTools (F12)
+        3. Allez dans l'onglet Application > Cookies
+        4. Copiez les valeurs des cookies importants
+        """)
+        
+        # Champs pour les cookies principaux
+        if 'youtube_cookies' not in st.session_state:
+            st.session_state.youtube_cookies = {}
+            
+        cookies = {
+            'CONSENT': st.text_input('Cookie CONSENT', key='consent'),
+            'VISITOR_INFO1_LIVE': st.text_input('Cookie VISITOR_INFO1_LIVE', key='visitor'),
+            'LOGIN_INFO': st.text_input('Cookie LOGIN_INFO', key='login'),
+            'SID': st.text_input('Cookie SID', key='sid'),
+            'HSID': st.text_input('Cookie HSID', key='hsid'),
+            'SSID': st.text_input('Cookie SSID', key='ssid'),
+        }
+        
+        # Ne sauvegarder que les cookies non vides
+        st.session_state.youtube_cookies = {k: v for k, v in cookies.items() if v}
+        
+        if st.button("Effacer les cookies"):
+            st.session_state.youtube_cookies = {}
+            st.experimental_rerun()
     
+    st.markdown("""
     ### Mode d'emploi :
     1. Collez l'URL de votre contenu
     2. Choisissez la langue
     3. Lancez la transcription
-    4. Utilisez l'IA pour améliorer le texte
+    4. Utilisez l'IA pour améliorer le texte si besoin
     """)
     
     languages = {
@@ -261,7 +298,7 @@ def main():
                         st.session_state.transcription = transcription
                         st.session_state.url = url
     
-    # Afficher la transcription si elle existe
+    # Afficher la transcription et options d'amélioration
     if st.session_state.transcription:
         st.subheader("📝 Transcription")
         raw_transcription = st.text_area(
@@ -271,58 +308,61 @@ def main():
             key="raw_transcription"
         )
         
-        # Options d'amélioration avec GPT
-        st.subheader("🤖 Amélioration avec IA")
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            style = st.selectbox(
-                "Style de reformulation :",
-                options=['default', 'formal', 'simple', 'academic'],
-                format_func=lambda x: {
-                    'default': '✨ Standard (clarté et cohérence)',
-                    'formal': '👔 Formel/Professionnel',
-                    'simple': '📚 Simplifié/Vulgarisé',
-                    'academic': '🎓 Académique'
-                }[x]
-            )
-        
-        with col2:
-            if st.button("Améliorer le texte"):
-                with st.spinner("🔄 Amélioration en cours..."):
-                    improved_text = improve_text_with_gpt(raw_transcription, style)
-                    if improved_text:
-                        st.text_area(
-                            "Texte amélioré :",
-                            value=improved_text,
-                            height=300,
-                            key="improved_text"
-                        )
-                        
-                        # Options d'export
-                        st.subheader("💾 Exporter")
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            st.download_button(
-                                "📄 Version brute (TXT)",
-                                raw_transcription,
-                                file_name="transcription_brute.txt",
-                                mime="text/plain"
+        # Vérifier si OpenAI est configuré
+        if 'OPENAI_API_KEY' in st.secrets:
+            st.subheader("🤖 Amélioration avec IA")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                style = st.selectbox(
+                    "Style de reformulation :",
+                    options=['default', 'formal', 'simple', 'academic'],
+                    format_func=lambda x: {
+                        'default': '✨ Standard (clarté et cohérence)',
+                        'formal': '👔 Formel/Professionnel',
+                        'simple': '📚 Simplifié/Vulgarisé',
+                        'academic': '🎓 Académique'
+                    }[x]
+                )
+            
+            with col2:
+                if st.button("Améliorer le texte"):
+                    with st.spinner("🔄 Amélioration en cours..."):
+                        improved_text = improve_text_with_gpt(raw_transcription, style)
+                        if improved_text:
+                            st.session_state.improved_text = improved_text
+                            st.text_area(
+                                "Texte amélioré :",
+                                value=improved_text,
+                                height=300,
+                                key="improved_text"
                             )
-                        
-                        with col2:
-                            st.download_button(
-                                "📄 Version améliorée (TXT)",
-                                improved_text,
-                                file_name="transcription_amelioree.txt",
-                                mime="text/plain"
-                            )
-                        
-                        with col3:
+                            
+                            # Options d'export
+                            st.subheader("💾 Exporter")
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.download_button(
+                                    "📄 Version brute (TXT)",
+                                    raw_transcription,
+                                    file_name="transcription_brute.txt",
+                                    mime="text/plain"
+                                )
+                            
+                            with col2:
+                                st.download_button(
+                                    "📄 Version améliorée (TXT)",
+                                    improved_text,
+                                    file_name="transcription_amelioree.txt",
+                                    mime="text/plain"
+                                )
+                                
+                            # Sauvegarder le rapport complet
                             json_data = json.dumps({
                                 "url": st.session_state.url,
                                 "platform": detect_platform(st.session_state.url),
+                                "language": selected_lang,
                                 "original": raw_transcription,
                                 "improved": improved_text,
                                 "style": style
@@ -334,11 +374,14 @@ def main():
                                 file_name="transcription_complete.json",
                                 mime="application/json"
                             )
+        else:
+            st.info("💡 Pour améliorer le texte avec l'IA, configurez votre clé API OpenAI dans les secrets de l'application.")
 
-    # Bouton pour effacer les résultats
+    # Bouton pour effacer la transcription
     if st.session_state.transcription and st.sidebar.button("🗑️ Effacer les résultats"):
         st.session_state.transcription = None
         st.session_state.url = None
+        st.session_state.improved_text = None
         st.experimental_rerun()
 
 if __name__ == "__main__":
