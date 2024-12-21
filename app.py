@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import yt_dlp
 import os
@@ -6,7 +5,6 @@ import speech_recognition as sr
 import tempfile
 import subprocess
 import json
-from openai import OpenAI
 
 # Configuration de la page
 st.set_page_config(
@@ -192,15 +190,15 @@ def transcribe_audio(audio_path, language='fr-FR'):
 
 def improve_text_with_gpt(text, style='default'):
     """Améliore le texte avec GPT"""
-    if 'OPENAI_API_KEY' not in st.secrets:
-        st.warning("⚠️ Clé API OpenAI non configurée. L'amélioration du texte n'est pas disponible.")
-        return None
-        
     try:
-        # Dans la version 0.x, on configure directement la clé API
-        import openai
-        openai.api_key = st.secrets['OPENAI_API_KEY']
+        import openai  # Import local
+        
+        if 'OPENAI_API_KEY' not in st.secrets:
+            st.warning("⚠️ Clé API OpenAI non configurée.")
+            return None
             
+        openai.api_key = st.secrets['OPENAI_API_KEY']
+        
         style_prompts = {
             'default': "Reformule ce texte pour le rendre plus clair et cohérent :",
             'formal': "Reformule ce texte dans un style formel et professionnel :",
@@ -216,10 +214,12 @@ def improve_text_with_gpt(text, style='default'):
             ],
             temperature=0.7
         )
-        improved_text = response.choices[0].message.content
-        st.session_state.improved_text = improved_text
-        return improved_text
         
+        return response.choices[0].message.content
+        
+    except ImportError:
+        st.error("❌ Module OpenAI non installé")
+        return None
     except Exception as e:
         st.error(f"Erreur lors de l'amélioration du texte : {str(e)}")
         return None
