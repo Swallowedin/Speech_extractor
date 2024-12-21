@@ -196,9 +196,9 @@ def improve_text_with_gpt(text, style='default'):
         return None
         
     try:
-        client = get_openai_client()
-        if not client:
-            return None
+        # Dans la version 0.x, on configure directement la clé API
+        import openai
+        openai.api_key = st.secrets['OPENAI_API_KEY']
             
         style_prompts = {
             'default': "Reformule ce texte pour le rendre plus clair et cohérent :",
@@ -207,7 +207,7 @@ def improve_text_with_gpt(text, style='default'):
             'academic': "Reformule ce texte dans un style académique :"
         }
         
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Tu es un expert en réécriture et amélioration de texte."},
