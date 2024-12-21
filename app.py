@@ -22,13 +22,12 @@ def get_openai_client():
     return None
 
 def download_and_convert_to_wav(url):
-    """Télécharge la vidéo et la convertit en WAV"""
+    """Télécharge la vidéo et la convertit en WAV avec des options avancées"""
     try:
-        # Créer un dossier temporaire
         temp_dir = tempfile.mkdtemp()
         output_path = os.path.join(temp_dir, 'audio')
         
-        # Configuration de yt-dlp
+        # Configuration avancée de yt-dlp
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -37,16 +36,42 @@ def download_and_convert_to_wav(url):
                 'preferredquality': '192',
             }],
             'outtmpl': output_path,
-            'quiet': True
+            'quiet': True,
+            # Options pour éviter les limites de YouTube
+            'cookiesfrombrowser': ('chrome',),  # Utilise les cookies de Chrome
+            'extract_flat': False,
+            'no_warnings': True,
+            'no_color': True,
+            'geo_bypass': True,
+            'nocheckcertificate': True,
+            # User agent aléatoire
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            # Ajout de retries
+            'retries': 3,
+            'fragment_retries': 3,
+            'skip_download': False,
+            'hls_prefer_native': True
         }
         
-        # Téléchargement
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-            
+        # Essayer de télécharger avec différentes options si nécessaire
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+        except Exception as e:
+            if "Sign in to confirm you're not a bot" in str(e):
+                st.warning("⚠️ YouTube demande une vérification. Tentative avec des options alternatives...")
+                # Essayer avec des options différentes
+                ydl_opts.update({
+                    'format': 'worstaudio/worst',  # Qualité inférieure mais plus facile à télécharger
+                })
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            else:
+                raise e
+                
         return f"{output_path}.wav"
     except Exception as e:
-        st.error(f"Erreur lors du téléchargement: {str(e)}")
+        st.error(f"Erreur lors du téléchargement: {str(e)}\n\nEssayez de :\n1. Utiliser une autre vidéo\n2. Vérifier que la vidéo est publique\n3. Attendre quelques minutes et réessayer")
         return None
 
 def transcribe_audio(audio_path, language='fr-FR'):
