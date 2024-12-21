@@ -31,7 +31,7 @@ def process_with_gpt(text, style='default'):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Tu es un expert en réécriture et amélioration de texte."},
                 {"role": "user", "content": f"{style_prompts[style]}\n\n{text}"}
