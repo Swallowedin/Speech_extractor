@@ -49,7 +49,74 @@ def download_and_convert_to_wav(url):
         st.error(f"Erreur lors du téléchargement: {str(e)}")
         return None
 
-def transcribe_a
+def transcribe_audio(audio_path, language='fr-FR'):
+    """Transcrit le fichier audio en le découpant en segments"""
+    recognizer = sr.Recognizer()
+    transcription = []
+    
+    try:
+        # Créer un dossier temporaire pour les segments
+        segment_dir = tempfile.mkdtemp()
+        segment_duration = 30  # en secondes
+        
+        # Utiliser ffmpeg pour diviser l'audio
+        command = [
+            'ffmpeg', '-i', audio_path,
+            '-f', 'segment',
+            '-segment_time', str(segment_duration),
+            '-c', 'copy',
+            os.path.join(segment_dir, 'segment_%03d.wav')
+        ]
+        
+        subprocess.run(command, capture_output=True)
+        
+        # Traiter chaque segment
+        segments = sorted([f for f in os.listdir(segment_dir) if f.startswith('segment_')])
+        
+        # Créer une barre de progression
+        progress_text = "Transcription en cours..."
+        progress_bar = st.progress(0, text=progress_text)
+        
+        for i, segment_file in enumerate(segments):
+            segment_path = os.path.join(segment_dir, segment_file)
+            
+            with sr.AudioFile(segment_path) as source:
+                audio = recognizer.record(source)
+                try:
+                    text = recognizer.recognize_google(audio, language=language)
+                    transcription.append(text)
+                except sr.UnknownValueError:
+                    st.warning(f"⚠️ Segment {i+1} inaudible")
+                    continue
+                except sr.RequestError as e:
+                    st.error(f"❌ Erreur API: {str(e)}")
+                    continue
+            
+            # Mettre à jour la progression
+            progress = (i + 1) / len(segments)
+            progress_bar.progress(progress, text=f"{progress_text} ({int(progress * 100)}%)")
+            
+            # Nettoyer le segment
+            os.remove(segment_path)
+        
+        progress_bar.progress(1.0, text="Transcription terminée !")
+        return ' '.join(transcription)
+        
+    except Exception as e:
+        st.error(f"Erreur de transcription: {str(e)}")
+        return None
+        
+    finally:
+        # Nettoyage des fichiers temporaires
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        if os.path.exists(segment_dir):
+            for file in os.listdir(segment_dir):
+                try:
+                    os.remove(os.path.join(segment_dir, file))
+                except:
+                    pass
+            os.rmdir(segment_dir)
 
 def improve_text_with_gpt(text, style='default'):
     """Améliore le texte avec GPT"""
