@@ -5,6 +5,7 @@ import speech_recognition as sr
 import tempfile
 import subprocess
 import json
+from pydub import AudioSegment
 
 # Configuration de la page
 st.set_page_config(
@@ -34,6 +35,43 @@ if 'transcription' not in st.session_state:
     st.session_state.transcription = None
 if 'url' not in st.session_state:
     st.session_state.url = None
+if 'file_source' not in st.session_state:
+    st.session_state.file_source = None
+
+def process_uploaded_file(uploaded_file):
+    """Traite le fichier uploadé et le convertit en WAV"""
+    try:
+        temp_dir = tempfile.mkdtemp()
+        
+        # Sauvegarder le fichier uploadé
+        input_path = os.path.join(temp_dir, uploaded_file.name)
+        with open(input_path, 'wb') as f:
+            f.write(uploaded_file.getbuffer())
+            
+        # Créer le chemin de sortie pour le fichier WAV
+        output_path = os.path.join(temp_dir, 'audio.wav')
+        
+        # Convertir en WAV avec ffmpeg
+        command = [
+            'ffmpeg', '-i', input_path,
+            '-acodec', 'pcm_s16le',
+            '-ar', '44100',
+            '-ac', '2',
+            output_path
+        ]
+        
+        subprocess.run(command, capture_output=True)
+        
+        # Vérifier si le fichier existe
+        if not os.path.exists(output_path):
+            st.error("❌ Erreur lors de la conversion du fichier audio")
+            return None
+            
+        return output_path
+        
+    except Exception as e:
+        st.error(f"❌ Erreur lors du traitement du fichier : {str(e)}")
+        return None
 
 def get_openai_client():
     """Initialise le client OpenAI uniquement si nécessaire"""
