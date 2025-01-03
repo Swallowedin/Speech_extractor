@@ -300,8 +300,8 @@ def main():
     
     st.markdown("""
     ### Mode d'emploi :
-    1. Collez l'URL de votre contenu
-    2. Choisissez la langue
+    1. Choisissez votre source (URL ou fichier local)
+    2. Sélectionnez la langue
     3. Lancez la transcription
     4. Utilisez l'IA pour améliorer le texte si besoin
     """)
@@ -313,36 +313,58 @@ def main():
         'Deutsch': 'de-DE'
     }
     
-    col1, col2 = st.columns([3, 1])
+    # Onglets pour choisir la source
+    source_tab1, source_tab2 = st.tabs(["🌐 URL", "📁 Fichier local"])
     
-    with col1:
+    with source_tab1:
         url = st.text_input("URL du média", 
                            placeholder="https://www.example.com/video...")
         if url:
             platform = detect_platform(url)
             st.caption(f"📺 Plateforme détectée : {platform}")
+            st.session_state.file_source = None
+            st.session_state.url = url
     
-    with col2:
-        selected_lang = st.selectbox("Langue", options=list(languages.keys()), index=0)
+    with source_tab2:
+        uploaded_file = st.file_uploader(
+            "Choisissez un fichier audio/vidéo",
+            type=['mp3', 'mp4', 'wav', 'm4a', 'ogg'],
+            help="Formats supportés : MP3, MP4, WAV, M4A, OGG"
+        )
+        if uploaded_file:
+            st.caption(f"📁 Fichier sélectionné : {uploaded_file.name}")
+            st.session_state.url = None
+            st.session_state.file_source = uploaded_file
+    
+    # Sélection de la langue
+    selected_lang = st.selectbox("Langue", options=list(languages.keys()), index=0)
     
     # Bouton de transcription
     if st.button("🎯 Lancer la transcription", type="primary"):
-        if url:
-            with st.status("Traitement en cours...") as status:
+        if not st.session_state.url and not st.session_state.file_source:
+            st.warning("⚠️ Veuillez d'abord choisir une source (URL ou fichier)")
+            return
+            
+        audio_path = None
+        
+        with st.status("Traitement en cours...") as status:
+            if st.session_state.url:
                 status.write("⏬ Téléchargement du média...")
-                audio_path = download_and_convert_to_wav(url)
+                audio_path = download_and_convert_to_wav(st.session_state.url)
+            elif st.session_state.file_source:
+                status.write("📝 Traitement du fichier local...")
+                audio_path = process_uploaded_file(st.session_state.file_source)
+            
+            if audio_path:
+                status.write("🎤 Transcription du contenu...")
+                transcription = transcribe_audio(
+                    audio_path,
+                    language=languages[selected_lang]
+                )
                 
-                if audio_path:
-                    status.write("🎤 Transcription du contenu...")
-                    transcription = transcribe_audio(
-                        audio_path,
-                        language=languages[selected_lang]
-                    )
-                    
-                    if transcription:
-                        status.update(label="✅ Transcription terminée !", state="complete")
-                        st.session_state.transcription = transcription
-                        st.session_state.url = url
+                if transcription:
+                    status.update(label="✅ Transcription terminée !", state="complete")
+                    st.session_state.transcription = transcription
     
     # Afficher la transcription et options d'amélioration
     if st.session_state.transcription:
@@ -386,7 +408,7 @@ def main():
                             
                             # Options d'export
                             st.subheader("💾 Exporter")
-                            col1, col2 = st.columns(2)
+                            col1, col2, col3 = st.columns(3)
                             
                             with col1:
                                 st.download_button(
@@ -403,32 +425,40 @@ def main():
                                     file_name="transcription_amelioree.txt",
                                     mime="text/plain"
                                 )
-                                
-                            # Sauvegarder le rapport complet
-                            json_data = json.dumps({
-                                "url": st.session_state.url,
-                                "platform": detect_platform(st.session_state.url),
-                                "language": selected_lang,
-                                "original": raw_transcription,
-                                "improved": improved_text,
-                                "style": style
-                            }, ensure_ascii=False, indent=2)
                             
-                            st.download_button(
-                                "📄 Rapport complet (JSON)",
-                                json_data,
-                                file_name="transcription_complete.json",
-                                mime="application/json"
-                            )
+                            with col3:
+                                # Sauvegarder le rapport complet
+                                source_info = {
+                                    "type": "url" if st.session_state.url else "file",
+                                    "source": st.session_state.url if st.session_state.url else st.session_state.file_source.name
+                                }
+                                
+                                json_data = json.dumps({
+                                    "source": source_info,
+                                    "platform": detect_platform(st.session_state.url) if st.session_state.url else "local_file",
+                                    "language": selected_lang,
+                                    "original": raw_transcription,
+                                    "improved": improved_text,
+                                    "style": style,
+                                    "timestamp": datetime.datetime.now().isoformat()
+                                }, ensure_ascii=False, indent=2)
+                                
+                                st.download_button(
+                                    "📄 Rapport complet (JSON)",
+                                    json_data,
+                                    file_name="transcription_complete.json",
+                                    mime="application/json"
+                                )
         else:
             st.info("💡 Pour améliorer le texte avec l'IA, configurez votre clé API OpenAI dans les secrets de l'application.")
-
-    # Bouton pour effacer la transcription
-    if st.session_state.transcription and st.sidebar.button("🗑️ Effacer les résultats"):
-        st.session_state.transcription = None
-        st.session_state.url = None
-        st.session_state.improved_text = None
-        st.experimental_rerun()
+        
+        # Bouton pour effacer la transcription
+        if st.button("🗑️ Effacer les résultats", type="secondary"):
+            st.session_state.transcription = None
+            st.session_state.url = None
+            st.session_state.file_source = None
+            st.session_state.improved_text = None
+            st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
