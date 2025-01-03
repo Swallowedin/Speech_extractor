@@ -128,25 +128,29 @@ def extract_peertube_video_id(url):
     parsed_url = urlparse(url)
     path_parts = parsed_url.path.split('/')
     
-    # Cherche l'ID dans les différents formats d'URL possibles
-    video_id = None
+    # Cherche d'abord un ID après /w/ (format courant de PeerTube)
+    for i, part in enumerate(path_parts):
+        if part == 'w' and i + 1 < len(path_parts):
+            # L'ID est la partie après 'w'
+            video_id = path_parts[i + 1].split('?')[0]  # Enlève les paramètres d'URL
+            return video_id
+    
+    # Si pas trouvé avec /w/, essaie d'autres formats courants
     for part in path_parts:
-        if part and not part.startswith('w'):
+        # Ignore les parties vides ou communes
+        if not part or part in ['watch', 'videos', 'v', 'w']:
             continue
-        if part.startswith('w'):
-            video_id = part[1:]  # Enlève le 'w' au début
-            break
-        elif len(part) > 8:  # Les IDs PeerTube sont généralement longs
-            video_id = part
-            break
+        # Vérifie si la partie ressemble à un ID PeerTube (longueur > 8 et alphanumérique)
+        if len(part) > 8 and part.replace('-', '').isalnum():
+            return part
     
-    # Si on n'a pas trouvé dans le chemin, cherche dans les paramètres
-    if not video_id:
-        params = parse_qs(parsed_url.query)
-        if 'v' in params:
-            video_id = params['v'][0]
+    # En dernier recours, cherche dans les paramètres d'URL
+    params = parse_qs(parsed_url.query)
+    for param in ['v', 'video', 'videoId']:
+        if param in params:
+            return params[param][0]
     
-    return video_id
+    return None
 
 def download_from_peertube(url, output_path):
     """Télécharge une vidéo depuis n'importe quelle instance PeerTube"""
