@@ -1,2 +1,5 @@
 ffmpeg
 python-dev
+libpulse-dev
+portaudio19-dev
+python3-all-dev
