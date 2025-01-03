@@ -179,22 +179,43 @@ def download_from_peertube(url, output_path):
             raise Exception(f"Erreur API: {response.status_code}")
         
         video_data = response.json()
+        st.write("Debug - Structure de données reçue:", video_data.keys())
         
-        # Cherche la meilleure qualité audio disponible
-        best_audio = None
-        if 'files' in video_data:
-            # Trie par résolution décroissante pour avoir la meilleure qualité
-            files = sorted(video_data['files'], key=lambda x: x.get('resolution', {}).get('id', 0), reverse=True)
-            if files:
-                best_audio = files[0]
+        # Cherche l'URL de la vidéo dans différents endroits possibles
+        direct_url = None
         
-        if not best_audio:
-            raise Exception("Aucun fichier audio trouvé")
+        # 1. Essaie dans les fichiers standards
+        if 'files' in video_data and video_data['files']:
+            direct_url = video_data['files'][0].get('fileUrl')
+            
+        # 2. Essaie dans les streams (format commun sur PeerTube)
+        if not direct_url and 'streamingPlaylists' in video_data:
+            for playlist in video_data['streamingPlaylists']:
+                if playlist.get('files'):
+                    direct_url = playlist['files'][0].get('fileUrl')
+                    break
+                    
+        # 3. Essaie dans le champ fileDownloadUrl
+        if not direct_url and 'fileDownloadUrl' in video_data:
+            direct_url = video_data['fileDownloadUrl']
         
-        # Télécharge le fichier
-        direct_url = best_audio['fileUrl']
+        # 4. Cherche dans les formats disponibles
+        if not direct_url and 'downloadUrl' in video_data:
+            direct_url = video_data['downloadUrl']
+            
+        # 5. Dernière tentative avec le champ webVideoUrl
+        if not direct_url and 'webVideoUrl' in video_data:
+            direct_url = video_data['webVideoUrl']
+
+        if not direct_url:
+            st.write("Debug - Contenu complet de la réponse:", json.dumps(video_data, indent=2))
+            raise Exception("Aucune URL de téléchargement trouvée")
+            
+        # Assure que l'URL est absolue
         if not direct_url.startswith('http'):
             direct_url = f"{base_url}{direct_url}"
+            
+        st.info(f"URL de téléchargement trouvée: {direct_url}")
             
         temp_file = f"{output_path}_temp.mp4"
         with requests.get(direct_url, stream=True, headers=headers) as r:
@@ -215,6 +236,7 @@ def download_from_peertube(url, output_path):
                                 st.write(f"Téléchargement: [{'=' * done}{' ' * (50-done)}] {dl*100/total_size:.1f}%")
         
         # Convertit en WAV
+        st.info("Conversion en WAV...")
         subprocess.run([
             'ffmpeg', '-i', temp_file,
             '-vn', '-acodec', 'pcm_s16le',
@@ -230,6 +252,8 @@ def download_from_peertube(url, output_path):
         
     except Exception as e:
         st.error(f"❌ Erreur lors du téléchargement PeerTube : {str(e)}")
+        if 'video_data' in locals():
+            st.write("Structure de la réponse de l'API :", video_data.keys())
         return None
 
 # Modification de la fonction download_and_convert_to_wav
