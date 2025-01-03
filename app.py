@@ -95,13 +95,152 @@ def detect_platform(url):
                 return platform
     return 'Autres plateformes'
 
+def is_peertube_instance(url):
+    """Détecte si l'URL provient d'une instance PeerTube"""
+    try:
+        import requests
+        from urllib.parse import urlparse
+
+        # Parse l'URL pour obtenir le domaine et le chemin
+        parsed_url = urlparse(url)
+        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        
+        # Vérifie si l'API PeerTube est disponible sur ce domaine
+        try:
+            response = requests.get(f"{base_url}/api/v1/config", timeout=5)
+            if response.ok and 'instance' in response.json():
+                return True
+        except:
+            # Essaie une autre approche si la première échoue
+            try:
+                response = requests.get(f"{base_url}/api/v1/videos", timeout=5)
+                return response.ok and 'data' in response.json()
+            except:
+                pass
+        return False
+    except:
+        return False
+
+def extract_peertube_video_id(url):
+    """Extrait l'ID de la vidéo PeerTube depuis l'URL"""
+    from urllib.parse import urlparse, parse_qs
+    
+    parsed_url = urlparse(url)
+    path_parts = parsed_url.path.split('/')
+    
+    # Cherche l'ID dans les différents formats d'URL possibles
+    video_id = None
+    for part in path_parts:
+        if part and not part.startswith('w'):
+            continue
+        if part.startswith('w'):
+            video_id = part[1:]  # Enlève le 'w' au début
+            break
+        elif len(part) > 8:  # Les IDs PeerTube sont généralement longs
+            video_id = part
+            break
+    
+    # Si on n'a pas trouvé dans le chemin, cherche dans les paramètres
+    if not video_id:
+        params = parse_qs(parsed_url.query)
+        if 'v' in params:
+            video_id = params['v'][0]
+    
+    return video_id
+
+def download_from_peertube(url, output_path):
+    """Télécharge une vidéo depuis n'importe quelle instance PeerTube"""
+    try:
+        import requests
+        from urllib.parse import urlparse
+
+        # Parse l'URL pour obtenir le domaine
+        parsed_url = urlparse(url)
+        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        
+        # Extrait l'ID de la vidéo
+        video_id = extract_peertube_video_id(url)
+        if not video_id:
+            raise ValueError("Impossible d'extraire l'ID de la vidéo")
+
+        # Récupère les informations de la vidéo via l'API
+        api_url = f"{base_url}/api/v1/videos/{video_id}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        
+        response = requests.get(api_url, headers=headers)
+        if not response.ok:
+            raise Exception(f"Erreur API: {response.status_code}")
+        
+        video_data = response.json()
+        
+        # Cherche la meilleure qualité audio disponible
+        best_audio = None
+        if 'files' in video_data:
+            # Trie par résolution décroissante pour avoir la meilleure qualité
+            files = sorted(video_data['files'], key=lambda x: x.get('resolution', {}).get('id', 0), reverse=True)
+            if files:
+                best_audio = files[0]
+        
+        if not best_audio:
+            raise Exception("Aucun fichier audio trouvé")
+        
+        # Télécharge le fichier
+        direct_url = best_audio['fileUrl']
+        if not direct_url.startswith('http'):
+            direct_url = f"{base_url}{direct_url}"
+            
+        temp_file = f"{output_path}_temp.mp4"
+        with requests.get(direct_url, stream=True, headers=headers) as r:
+            r.raise_for_status()
+            total_size = int(r.headers.get('content-length', 0))
+            
+            with open(temp_file, 'wb') as f:
+                if total_size == 0:
+                    f.write(r.content)
+                else:
+                    dl = 0
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            dl += len(chunk)
+                            f.write(chunk)
+                            done = int(50 * dl / total_size)
+                            if done % 5 == 0:
+                                st.write(f"Téléchargement: [{'=' * done}{' ' * (50-done)}] {dl*100/total_size:.1f}%")
+        
+        # Convertit en WAV
+        subprocess.run([
+            'ffmpeg', '-i', temp_file,
+            '-vn', '-acodec', 'pcm_s16le',
+            '-ar', '44100', '-ac', '2',
+            f"{output_path}.wav"
+        ], capture_output=True)
+        
+        # Nettoie le fichier temporaire
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+            
+        return f"{output_path}.wav"
+        
+    except Exception as e:
+        st.error(f"❌ Erreur lors du téléchargement PeerTube : {str(e)}")
+        return None
+
+# Modification de la fonction download_and_convert_to_wav
 def download_and_convert_to_wav(url):
     """Télécharge l'audio depuis n'importe quelle plateforme supportée"""
     try:
         temp_dir = tempfile.mkdtemp()
         output_path = os.path.join(temp_dir, 'audio')
         
-        # Configuration avancée de yt-dlp
+        # Vérifie d'abord si c'est une instance PeerTube
+        if is_peertube_instance(url):
+            st.info("📺 Instance PeerTube détectée")
+            return download_from_peertube(url, output_path)
+        
+        # Si ce n'est pas PeerTube, utilise la configuration standard yt-dlp
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
@@ -135,23 +274,15 @@ def download_and_convert_to_wav(url):
         elif platform == 'Instagram':
             ydl_opts.update({'instagram_login': os.getenv('INSTAGRAM_LOGIN', '')})
         
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info.get('duration', 0) > 3600:  # Plus d'une heure
-                    if not st.confirm("⚠️ Cette vidéo est très longue. Continuer ?"):
-                        return None
-                
-                st.info("⏬ Téléchargement en cours...")
-                ydl.download([url])
-                
-        except yt_dlp.utils.DownloadError as e:
-            if "Sign in" in str(e) or "Login" in str(e):
-                st.error(f"❌ Authentification requise pour {platform}")
-            else:
-                st.error(f"❌ Erreur de téléchargement : {str(e)}")
-            return None
-                
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info.get('duration', 0) > 3600:  # Plus d'une heure
+                if not st.confirm("⚠️ Cette vidéo est très longue. Continuer ?"):
+                    return None
+            
+            st.info("⏬ Téléchargement en cours...")
+            ydl.download([url])
+            
         return f"{output_path}.wav"
         
     except Exception as e:
